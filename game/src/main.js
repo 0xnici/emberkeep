@@ -9,7 +9,7 @@ import { makeInput } from './input.js';
 import { draw } from './render.js';
 import { shotWorld } from './shots.js';
 import {
-  EVENT_BLOWN, EVENT_FEED, EVENT_GILDED, EVENT_GUST, EVENT_HIT, EVENT_SPLIT, EVENT_WAVE,
+  EVENT_BLAZE, EVENT_BLOWN, EVENT_FEED, EVENT_GILDED, EVENT_GUST, EVENT_HIT, EVENT_SPLIT, EVENT_WAVE,
   SCREEN_LOST, SCREEN_PLAY, SCREEN_TITLE, SCREEN_WON,
   makeWorld, startNight, stepWorld,
 } from './world.js';
@@ -61,6 +61,7 @@ if (shotName !== null) {
       else if (event === EVENT_SPLIT) sfx.split();
       else if (event === EVENT_WAVE) sfx.wave();
       else if (event === EVENT_GUST) sfx.gust();
+      else if (event === EVENT_BLAZE) sfx.blaze();
     }
     if (world.screen === SCREEN_WON && lastScreen !== SCREEN_WON) sfx.dawn();
     if (world.screen === SCREEN_LOST && lastScreen !== SCREEN_LOST) sfx.over();

@@ -14,8 +14,9 @@ import {
   SCREEN_LOST, SCREEN_PLAY, SCREEN_WON, makeWorld, startNight, stepWorld,
 } from './world.js';
 
-const TITLE_STEPS = 150; // 2.5 s of idle title: the flame breathes on its screen
-const PLAY_SECONDS = 64; // well into wave 3: splitters about, combo up, field busy
+const TITLE_STEPS = 420; // 7 s of title drift: the field is populated, the keeper mid-circle
+const PLAY_FROM_SECONDS = 92; // start looking in wave 4: soot clouds and splitters are about
+const PLAY_LIMIT_SECONDS = 140; // never look past here (wave 5): the fallback frame is busy anyway
 const END_LIMIT_SECONDS = 200; // longer than a night, so a scene can always settle
 const SEED_TRIES = [0, 11, 23, 37, 41, 53, 67, 71, 83, 97];
 
@@ -94,14 +95,32 @@ function endedScene(seed, pilot, wanted) {
   return runScene(seed, pilot, END_LIMIT_SECONDS);
 }
 
+/**
+ * A frame worth showing: a gust is visibly flashing, bursts or score notes
+ * are in the air, the field is busy and the combo is up — or, best of all,
+ * the flame is blazing mid-gust. The play scene plays the real rules forward
+ * and stops at the first such moment, so the frame is an honest mid-action
+ * instant of a real game, not a quiet one that happens to come first.
+ */
+function photogenic(world) {
+  const alive = world.entities.filter((e) => e.alive).length;
+  if (world.keeper.gustFlash <= 0.08 || alive < 11) return false;
+  if (world.blaze > 0) return true;
+  return world.combo >= 3 && (world.particles.length >= 8 || world.popups.length >= 2);
+}
+
 /** Build the world a ?shot= scene shows. Unknown names fall back to the title. */
 export function shotWorld(name, seed) {
   if (name === 'play') {
     const world = makeWorld(seed);
     startNight(world);
     world.next = makeWorld(seed).next;
-    const steps = Math.floor(PLAY_SECONDS / STEP);
-    for (let i = 0; i < steps; i += 1) stepWorld(world, carefulControl(world));
+    const from = Math.floor(PLAY_FROM_SECONDS / STEP);
+    const limit = Math.floor(PLAY_LIMIT_SECONDS / STEP);
+    for (let i = 0; i < limit; i += 1) {
+      stepWorld(world, carefulControl(world));
+      if (i >= from && photogenic(world)) break;
+    }
     return world;
   }
   if (name === 'dawn') {

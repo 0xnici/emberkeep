@@ -17,13 +17,21 @@ soot clouds roll in and smother more health than any fiend. Survive five
 waves — 150 seconds of night — and dawn breaks with a bonus for whatever
 flame is left. If the flame dies first, the dark gets in.
 
+Chain feeds quickly and the combo climbs to x8 — and then the flame **blazes**:
+for six seconds your gusts blow wider and harder and every ember is worth
+double. A blaze is worth defending, because one fiend through the guard
+douses it along with your combo. Every feed, gust-kill and hit answers with a
+floating score note, so the field itself keeps the score where you can see it.
+
 **Controls** — turn the keeper with ← → or A / D, or steer with the mouse;
 gust with SPACE or a click; Enter starts and restarts; P pauses; M mutes.
 
 **Feel** — fixed-step simulation (60 steps/s at any refresh rate), seeded
-worlds, particles on every feed and hit, a screen-shake and flash on a fiend's
-hit, and a fully synthesised WebAudio soundscape (gusts, chimes that rise with
-your combo, the dawn arpeggio) — no audio files at all.
+worlds, particles on every feed and hit, floating score notes on every score,
+a screen-shake and flash on a fiend's hit, a living title screen where the
+night drifts past the hearth while you read, and a fully synthesised WebAudio
+soundscape (gusts, chimes that rise with your combo, the blaze igniting, the
+dawn arpeggio) — no audio files at all.
 
 ## Layout
 

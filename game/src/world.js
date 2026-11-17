@@ -5,7 +5,7 @@
 // generator the world is made with, so a seed replays the same night.
 
 import {
-  COMBO, EMBER, FIELD, FIEND, HEARTH, KEEPER, NIGHT, SPAWN, STEP,
+  BLAZE, COMBO, EMBER, FIELD, FIEND, HEARTH, KEEPER, NIGHT, SPAWN, STEP,
 } from './config.js';
 import { makeRandom, range } from './random.js';
 
@@ -27,6 +27,7 @@ export const EVENT_BLOWN = 'blown';
 export const EVENT_SPLIT = 'split';
 export const EVENT_WAVE = 'wave';
 export const EVENT_GUST = 'gust';
+export const EVENT_BLAZE = 'blaze';
 
 /** A fresh night, on the title screen, waiting for the keeper to begin. */
 export function makeWorld(seed) {
@@ -43,9 +44,12 @@ export function makeWorld(seed) {
     health: HEARTH.startHealth,
     combo: 1,
     comboTimer: 0,
+    blaze: 0, // seconds of blaze left; 0 = the flame is calm
     keeper: { angle: -Math.PI / 2, gustTimer: 0, gustFlash: 0 },
     entities: [],
     particles: [],
+    popups: [], // floating score notes (+50, -9, BLAZE!) the renderer lifts and fades
+    titleTimer: 0, // the title screen's slow spawn clock for its drifting visitors
     spawnTimer: SPAWN.firstDelay,
     shake: 0,
     flash: 0, // a warm pulse when an ember lands, a red one when a fiend does
@@ -127,25 +131,37 @@ function burst(world, x, y, count, colour, speed) {
   }
 }
 
+/** A floating score note at a point: the renderer lifts it and fades it out. */
+export function spawnPopup(world, x, y, text, colour) {
+  world.popups.push({ x, y, text, colour, life: 0.95, maxLife: 0.95 });
+}
+
+/** How far a gust reaches right now: a blazing flame blows wider. */
+export function gustRangeNow(world) {
+  return KEEPER.gustRange * (world.blaze > 0 ? BLAZE.gustRangeMult : 1);
+}
+
 /** The keeper puffs: everything in the cone ahead is pushed away from the hearth. */
 function gust(world) {
   const keeper = world.keeper;
   keeper.gustTimer = KEEPER.gustCooldown;
   keeper.gustFlash = 0.22;
   world.events.push(EVENT_GUST);
+  const range = gustRangeNow(world);
+  const powerMult = world.blaze > 0 ? BLAZE.gustPowerMult : 1;
   for (const e of world.entities) {
     if (!e.alive) continue;
     const dx = e.x - HEARTH.x;
     const dy = e.y - HEARTH.y;
     const dist = Math.hypot(dx, dy);
-    if (dist > KEEPER.gustRange || dist < 1) continue;
+    if (dist > range || dist < 1) continue;
     let diff = Math.atan2(dy, dx) - keeper.angle;
     while (diff > Math.PI) diff -= Math.PI * 2;
     while (diff < -Math.PI) diff += Math.PI * 2;
     if (Math.abs(diff) > KEEPER.gustHalfAngle) continue;
-    const falloff = 1 - dist / (KEEPER.gustRange * 1.25);
+    const falloff = 1 - dist / (range * 1.25);
     const isGood = e.kind === KIND_EMBER || e.kind === KIND_GILDED;
-    const power = (isGood ? KEEPER.gustPowerOnEmber : KEEPER.gustPower) * falloff;
+    const power = (isGood ? KEEPER.gustPowerOnEmber : KEEPER.gustPower * powerMult) * falloff;
     e.vx += (dx / dist) * power;
     e.vy += (dy / dist) * power;
     if (!isGood) {
@@ -161,6 +177,7 @@ function gust(world) {
         world.score += FIEND.gustPoints;
         world.blown += 1;
         burst(world, e.x, e.y, 10, '#8f88b8', 120);
+        spawnPopup(world, e.x, e.y - 14, `+${FIEND.gustPoints}`, '#b9b3e0');
         world.events.push(EVENT_BLOWN);
         continue;
       }
@@ -187,23 +204,69 @@ function feedEmber(world, e) {
   world.combo = Math.min(COMBO.max, world.combo + (world.comboTimer > 0 ? 1 : 0));
   if (world.comboTimer <= 0) world.combo = 1;
   world.comboTimer = COMBO.window;
-  const points = (gilded ? EMBER.gildedPoints : EMBER.points) * world.combo;
+  // A full combo catches the flame: the blaze starts on the feed that fills
+  // it, and while it burns every feed is worth double.
+  if (world.combo >= COMBO.max && world.blaze <= 0) {
+    world.blaze = BLAZE.duration;
+    world.events.push(EVENT_BLAZE);
+    spawnPopup(world, HEARTH.x, HEARTH.y - 96, 'BLAZE!', '#ffb340');
+    burst(world, HEARTH.x, HEARTH.y - 20, 26, '#ffb340', 190);
+  }
+  const points = (gilded ? EMBER.gildedPoints : EMBER.points) * world.combo
+    * (world.blaze > 0 ? BLAZE.pointsMult : 1);
   world.score += points;
   world.fed += 1;
   world.health = Math.min(HEARTH.maxHealth, world.health + (gilded ? EMBER.gildedFuel : EMBER.fuel));
   world.flash = 0.35;
   burst(world, HEARTH.x, HEARTH.y - 20, gilded ? 16 : 9, gilded ? '#ffe98a' : '#ffc95e', 130);
+  spawnPopup(world, HEARTH.x, HEARTH.y - 64, `+${points}`, gilded ? '#ffe98a' : '#ffc95e');
   world.events.push(gilded ? EVENT_GILDED : EVENT_FEED);
 }
 
 function fiendHits(world, e) {
-  world.health -= e.kind === KIND_SOOT ? FIEND.sootDamage : FIEND.damage;
+  const damage = e.kind === KIND_SOOT ? FIEND.sootDamage : FIEND.damage;
+  world.health -= damage;
   world.combo = 1;
   world.comboTimer = 0;
+  world.blaze = 0; // a fiend through the guard douses the blaze as well
   world.shake = 0.35;
   world.flash = -0.4;
   burst(world, HEARTH.x, HEARTH.y, 14, '#ff5d47', 160);
+  spawnPopup(world, HEARTH.x, HEARTH.y - 64, `-${damage}`, '#ff5d47');
   world.events.push(EVENT_HIT);
+}
+
+/**
+ * The title screen's quiet life: embers and fiends drift at the hearth at
+ * half pace and the keeper circles it slowly, so the cover shows the game
+ * itself waiting — a living field, not an empty one. Nothing scores here;
+ * what reaches the fire just sparks and is gone.
+ */
+function driftTitle(world) {
+  world.time += STEP;
+  world.keeper.angle += STEP * 0.3;
+  world.titleTimer -= STEP;
+  if (world.titleTimer <= 0 && world.entities.length < 8) {
+    spawnEntity(world);
+    world.titleTimer = 0.9;
+  }
+  for (const e of world.entities) {
+    if (!e.alive) continue;
+    const dx = HEARTH.x - e.x;
+    const dy = HEARTH.y - e.y;
+    const dist = Math.hypot(dx, dy) || 1;
+    const speed = (e.kind === KIND_EMBER || e.kind === KIND_GILDED ? EMBER.speed : FIEND.speed) * 0.5;
+    const wander = Math.sin(world.time * 1.7 + e.wanderPhase) * 14;
+    e.vx += (((dx / dist) * speed + (-dy / dist) * wander) - e.vx) * Math.min(1, 2.2 * STEP);
+    e.vy += (((dy / dist) * speed + (dx / dist) * wander) - e.vy) * Math.min(1, 2.2 * STEP);
+    e.x += e.vx * STEP;
+    e.y += e.vy * STEP;
+    if (dist < HEARTH.radius + e.radius) {
+      e.alive = false;
+      burst(world, HEARTH.x, HEARTH.y - 16, 5, '#ffc95e', 90);
+    }
+  }
+  world.entities = world.entities.filter((e) => e.alive);
 }
 
 /**
@@ -226,6 +289,13 @@ export function stepWorld(world, control) {
   world.shake = Math.max(0, world.shake - STEP);
   world.flash = Math.abs(world.flash) <= STEP ? 0 : world.flash - Math.sign(world.flash) * STEP;
   keeper.gustFlash = Math.max(0, keeper.gustFlash - STEP);
+  world.blaze = Math.max(0, world.blaze - STEP);
+  for (const p of world.popups) {
+    p.y -= 34 * STEP;
+    p.life -= STEP;
+  }
+  world.popups = world.popups.filter((p) => p.life > 0);
+  if (world.screen === SCREEN_TITLE) driftTitle(world);
   if (world.screen !== SCREEN_PLAY || world.paused) return;
 
   world.time += STEP;
@@ -238,6 +308,13 @@ export function stepWorld(world, control) {
     world.screen = SCREEN_WON;
     world.score += Math.round(world.health) * 5; // the dawn bonus: what flame is left
     world.best = Math.max(world.best, world.score);
+    world.blaze = 0;
+    // Dawn scatters the night: every fiend left on the field burns away to
+    // ash and the last embers lift off, so the win screen is a clear sky.
+    for (const e of world.entities) {
+      burst(world, e.x, e.y, 7, e.kind === KIND_EMBER || e.kind === KIND_GILDED ? '#ffc95e' : '#8f88b8', 110);
+    }
+    world.entities = [];
     return;
   }
   if (world.health <= 0) {
@@ -304,6 +381,10 @@ export function stepWorld(world, control) {
       if (e.kind === KIND_FIEND || e.kind === KIND_MITE || e.kind === KIND_SOOT) {
         world.score += FIEND.gustPoints;
         world.blown += 1;
+        spawnPopup(world,
+          Math.min(FIELD.width - 30, Math.max(30, e.x)),
+          Math.min(FIELD.height - 20, Math.max(30, e.y)),
+          `+${FIEND.gustPoints}`, '#b9b3e0');
         world.events.push(EVENT_BLOWN);
       }
     }

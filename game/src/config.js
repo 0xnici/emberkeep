@@ -55,6 +55,19 @@ export const FIEND = {
 /** Combo: feeds within the window raise the multiplier, to a cap; a fiend hit resets it. */
 export const COMBO = { window: 3.0, max: 8 };
 
+/**
+ * Blaze: fill the combo to its cap and the flame catches — for a few seconds
+ * the gusts blow wider and harder and every ember is worth double. A fiend
+ * reaching the fire douses it early, so a blaze is something to defend.
+ */
+export const BLAZE = {
+  duration: 6, // seconds a blaze burns once lit
+  gustRangeMult: 1.45, // how much wider the gust cone reaches while blazing
+  gustPowerMult: 1.5, // how much harder a gust pushes while blazing
+  pointsMult: 2, // embers fed while blazing score double
+  flameScale: 1.35, // the flame drawn this much larger while blazing
+};
+
 /** Spawning: one shared timer; the mix shifts toward fiends as the night deepens. */
 export const SPAWN = {
   firstDelay: 0.8,

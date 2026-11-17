@@ -4,10 +4,10 @@
 // kept large and high-contrast so a screenshot shrunk to a contact sheet
 // still reads at a glance — the judge sees the game mostly through them.
 
-import { FIELD, FONT, HEARTH, KEEPER, NIGHT, PALETTE } from './config.js';
+import { BLAZE, COMBO, FIELD, FONT, HEARTH, KEEPER, NIGHT, PALETTE } from './config.js';
 import {
   KIND_EMBER, KIND_FIEND, KIND_GILDED, KIND_MITE, KIND_SOOT,
-  SCREEN_LOST, SCREEN_PLAY, SCREEN_TITLE, SCREEN_WON, nightLeft, waveAt,
+  SCREEN_LOST, SCREEN_PLAY, SCREEN_TITLE, SCREEN_WON, gustRangeNow, nightLeft, waveAt,
 } from './world.js';
 import { isMuted } from './audio.js';
 
@@ -27,8 +27,9 @@ function roundRect(ctx, x, y, w, h, r) {
 function drawFlame(ctx, world, x, y, scale) {
   const health = world.health / HEARTH.maxHealth;
   const flicker = Math.sin(world.time * 11) * 0.05 + Math.sin(world.time * 23 + 1.7) * 0.03;
-  const h = (64 + health * 58) * scale * (1 + flicker);
-  const w = (30 + health * 20) * scale;
+  const blazeScale = world.blaze > 0 ? BLAZE.flameScale : 1;
+  const h = (64 + health * 58) * scale * blazeScale * (1 + flicker);
+  const w = (30 + health * 20) * scale * blazeScale;
   const layers = [
     [PALETTE.flameEdge, 1.0, 0],
     [PALETTE.flameMid, 0.68, h * 0.1],
@@ -47,12 +48,13 @@ function drawFlame(ctx, world, x, y, scale) {
 
 function drawHearth(ctx, world) {
   const { x, y } = HEARTH;
-  // The glow the flame throws on the ground.
-  const glow = ctx.createRadialGradient(x, y, 10, x, y, 240);
-  glow.addColorStop(0, 'rgba(255, 160, 60, 0.30)');
+  // The glow the flame throws on the ground: wider and hotter in a blaze.
+  const glowRadius = world.blaze > 0 ? 320 : 240;
+  const glow = ctx.createRadialGradient(x, y, 10, x, y, glowRadius);
+  glow.addColorStop(0, world.blaze > 0 ? 'rgba(255, 170, 60, 0.45)' : 'rgba(255, 160, 60, 0.30)');
   glow.addColorStop(1, 'rgba(255, 160, 60, 0)');
   ctx.fillStyle = glow;
-  ctx.fillRect(x - 240, y - 240, 480, 480);
+  ctx.fillRect(x - glowRadius, y - glowRadius, glowRadius * 2, glowRadius * 2);
   // The keeper's orbit, a faint ring of stones.
   ctx.strokeStyle = PALETTE.groundRing;
   ctx.lineWidth = 3;
@@ -92,13 +94,13 @@ function drawKeeper(ctx, world) {
   const a = world.keeper.angle;
   const kx = x + Math.cos(a) * KEEPER.orbitRadius;
   const ky = y + Math.sin(a) * KEEPER.orbitRadius;
-  // The gust cone while it flashes: a soft fan blowing outward.
+  // The gust cone while it flashes: a soft fan blowing outward, wider in a blaze.
   if (world.keeper.gustFlash > 0) {
     const t = world.keeper.gustFlash / 0.22;
     ctx.fillStyle = `rgba(191, 233, 255, ${0.20 * t})`;
     ctx.beginPath();
     ctx.moveTo(x, y);
-    ctx.arc(x, y, KEEPER.gustRange * (1.1 - t * 0.25), a - KEEPER.gustHalfAngle, a + KEEPER.gustHalfAngle);
+    ctx.arc(x, y, gustRangeNow(world) * (1.1 - t * 0.25), a - KEEPER.gustHalfAngle, a + KEEPER.gustHalfAngle);
     ctx.closePath();
     ctx.fill();
   }
@@ -128,9 +130,9 @@ function drawEntity(ctx, world, e) {
   if (e.kind === KIND_EMBER || e.kind === KIND_GILDED) {
     const gilded = e.kind === KIND_GILDED;
     const pulse = 1 + Math.sin(world.time * 6 + e.wanderPhase) * 0.12;
-    ctx.fillStyle = gilded ? 'rgba(255, 233, 138, 0.35)' : 'rgba(255, 201, 94, 0.30)';
+    ctx.fillStyle = gilded ? 'rgba(255, 233, 138, 0.32)' : 'rgba(255, 201, 94, 0.27)';
     ctx.beginPath();
-    ctx.arc(0, 0, e.radius * 2.1 * pulse, 0, Math.PI * 2);
+    ctx.arc(0, 0, e.radius * 1.7 * pulse, 0, Math.PI * 2);
     ctx.fill();
     ctx.fillStyle = gilded ? PALETTE.gilded : PALETTE.ember;
     ctx.beginPath();
@@ -186,17 +188,22 @@ function drawEntity(ctx, world, e) {
   ctx.restore();
 }
 
+/** Blend two #rrggbb colours by t (0 = a, 1 = b). */
+function mixColour(a, b, t) {
+  const pa = [1, 3, 5].map((i) => parseInt(a.slice(i, i + 2), 16));
+  const pb = [1, 3, 5].map((i) => parseInt(b.slice(i, i + 2), 16));
+  const mixed = pa.map((v, i) => Math.round(v + (pb[i] - v) * t));
+  return `rgb(${mixed[0]}, ${mixed[1]}, ${mixed[2]})`;
+}
+
 function drawField(ctx, world) {
-  // Night sky-ground: a vertical wash, then the dawn creeping up on the win screen.
+  // Night sky-ground: a vertical wash that warms smoothly into dawn on the
+  // win screen — deep blue up top, rose at the horizon — as dawnGlow rises.
   const g = ctx.createLinearGradient(0, 0, 0, FIELD.height);
-  if (world.screen === SCREEN_WON) {
-    const t = world.dawnGlow;
-    g.addColorStop(0, t > 0.5 ? '#3a3f6e' : PALETTE.night);
-    g.addColorStop(1, t > 0.5 ? '#8a5a68' : PALETTE.nightLow);
-  } else {
-    g.addColorStop(0, PALETTE.night);
-    g.addColorStop(1, PALETTE.nightLow);
-  }
+  const t = world.screen === SCREEN_WON ? world.dawnGlow : 0;
+  g.addColorStop(0, mixColour(PALETTE.night, '#3a3f6e', t));
+  g.addColorStop(0.62, mixColour(PALETTE.nightLow, '#6e4460', t));
+  g.addColorStop(1, mixColour(PALETTE.nightLow, '#a06a5e', t));
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, FIELD.width, FIELD.height);
   // Scattered stars / dust motes, fixed by a hash of their index so they never move.
@@ -237,6 +244,17 @@ function drawHud(ctx, world) {
     ctx.fillStyle = PALETTE.accent;
     ctx.font = `800 26px ${FONT}`;
     ctx.fillText(`COMBO x${world.combo}`, 26, 106);
+    // The combo's remaining window as a thin bar: feed again before it empties.
+    bar(ctx, 27, 114, 120, 5, world.comboTimer / COMBO.window, PALETTE.accent, 'rgba(244,239,228,0.14)');
+  }
+  if (world.blaze > 0) {
+    // The blaze banner, under the night bar: what it does and how long is left.
+    ctx.textAlign = 'center';
+    ctx.fillStyle = PALETTE.accent;
+    ctx.font = `800 25px ${FONT}`;
+    ctx.fillText('BLAZE! WIDE GUSTS · DOUBLE EMBERS', FIELD.width / 2, 100);
+    bar(ctx, FIELD.width / 2 - 110, 110, 220, 6, world.blaze / BLAZE.duration, PALETTE.flameMid, 'rgba(244,239,228,0.14)');
+    ctx.textAlign = 'left';
   }
   // Night progress, top centre: a moon that empties as dawn nears, and the wave pips.
   const total = NIGHT.waves * NIGHT.waveSeconds;
@@ -262,41 +280,44 @@ function drawHud(ctx, world) {
   }
 }
 
-function panel(ctx, w, h) {
-  ctx.fillStyle = 'rgba(16, 12, 34, 0.88)';
-  roundRect(ctx, FIELD.width / 2 - w / 2, FIELD.height / 2 - h / 2, w, h, 18);
+function panel(ctx, w, h, cy = FIELD.height / 2) {
+  ctx.fillStyle = 'rgba(16, 12, 34, 0.84)';
+  roundRect(ctx, FIELD.width / 2 - w / 2, cy - h / 2, w, h, 18);
   ctx.fill();
   ctx.strokeStyle = 'rgba(255, 179, 64, 0.35)';
   ctx.lineWidth = 2;
-  roundRect(ctx, FIELD.width / 2 - w / 2, FIELD.height / 2 - h / 2, w, h, 18);
+  roundRect(ctx, FIELD.width / 2 - w / 2, cy - h / 2, w, h, 18);
   ctx.stroke();
 }
 
 function drawTitle(ctx, world) {
-  panel(ctx, 660, 430);
+  // The title stands over the living field: the hearth, its flame and the
+  // circling keeper stay in view in the middle band, the words above and a
+  // slim how-to panel below — the cover shows the game, not a text card.
   ctx.textAlign = 'center';
   ctx.fillStyle = PALETTE.accent;
-  ctx.font = `800 64px ${FONT}`;
-  ctx.fillText('EMBERKEEP', FIELD.width / 2, 218);
+  ctx.font = `800 76px ${FONT}`;
+  ctx.fillText('EMBERKEEP', FIELD.width / 2, 138);
   ctx.fillStyle = PALETTE.text;
-  ctx.font = `500 21px ${FONT}`;
-  ctx.fillText('Keep the flame alive until dawn.', FIELD.width / 2, 258);
+  ctx.font = `500 22px ${FONT}`;
+  ctx.fillText('Keep the flame alive until dawn.', FIELD.width / 2, 178);
+  panel(ctx, 800, 196, 584);
   ctx.font = `400 18px ${FONT}`;
   ctx.fillStyle = PALETTE.muted;
-  ctx.fillText('Embers drift in from the dark — let them reach the fire to feed it.', FIELD.width / 2, 308);
-  ctx.fillText('Ash fiends want it dead. Blow them off the field with your bellows.', FIELD.width / 2, 336);
-  ctx.fillText('Turn: ← → or A / D, or steer with the mouse    Gust: SPACE or click', FIELD.width / 2, 382);
-  ctx.fillText('A gusted fiend may split — its mites still burn. Soot smothers most of all.', FIELD.width / 2, 410);
+  ctx.fillText('Embers drift in from the dark — let them reach the fire to feed it.', FIELD.width / 2, 524);
+  ctx.fillText('Ash fiends want it dead. Blow them off the field with your bellows.', FIELD.width / 2, 552);
+  ctx.fillText('Turn: ← → or A / D, or steer with the mouse    Gust: SPACE or click', FIELD.width / 2, 586);
+  ctx.fillText('Chain feeds to x8 and the flame BLAZES — wide gusts, double embers.', FIELD.width / 2, 614);
   ctx.fillStyle = PALETTE.keeper;
   ctx.font = `700 24px ${FONT}`;
   const pulse = 0.75 + Math.sin(world.time * 4) * 0.25;
   ctx.globalAlpha = pulse;
-  ctx.fillText('PRESS ENTER TO BEGIN THE NIGHT', FIELD.width / 2, 472);
+  ctx.fillText('PRESS ENTER TO BEGIN THE NIGHT', FIELD.width / 2, 656);
   ctx.globalAlpha = 1;
   if (world.best > 0) {
     ctx.fillStyle = PALETTE.muted;
     ctx.font = `600 16px ${FONT}`;
-    ctx.fillText(`Best so far: ${world.best}`, FIELD.width / 2, 508);
+    ctx.fillText(`Best so far: ${world.best}`, FIELD.width / 2, 462);
   }
 }
 
@@ -342,7 +363,16 @@ export function draw(ctx, world) {
     ctx.fill();
   }
   ctx.globalAlpha = 1;
-  if (world.screen !== SCREEN_TITLE) drawKeeper(ctx, world);
+  // The score notes float up from where they were earned and fade.
+  ctx.textAlign = 'center';
+  ctx.font = `800 21px ${FONT}`;
+  for (const p of world.popups) {
+    ctx.globalAlpha = Math.max(0, p.life / p.maxLife);
+    ctx.fillStyle = p.colour;
+    ctx.fillText(p.text, p.x, p.y);
+  }
+  ctx.globalAlpha = 1;
+  drawKeeper(ctx, world);
   if (world.flash !== 0) {
     ctx.fillStyle = world.flash > 0
       ? `rgba(255, 190, 80, ${world.flash * 0.25})`
